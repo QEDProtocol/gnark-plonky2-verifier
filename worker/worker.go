@@ -9,12 +9,12 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/GopherJ/doge-covenant/serialize"
 	gl "github.com/cf/gnark-plonky2-verifier/goldilocks"
 	"github.com/cf/gnark-plonky2-verifier/types"
 	"github.com/cf/gnark-plonky2-verifier/variables"
 	"github.com/cf/gnark-plonky2-verifier/verifier"
 	"github.com/consensys/gnark-crypto/ecc"
+	"github.com/consensys/gnark-crypto/ecc/bn254/fp"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/rs/zerolog"
 	"github.com/zilong-dai/gnark/backend/groth16"
@@ -30,6 +30,10 @@ import (
 	"github.com/zilong-dai/gnark/std/math/uints"
 	gosha3 "golang.org/x/crypto/sha3"
 )
+
+func fpHex(x *fp.Element) string {
+	return fmt.Sprintf("%064x", x.BigInt(new(big.Int)))
+}
 
 type PreparedCircuit struct {
 	PKey *groth16_bn254.ProvingKey
@@ -249,7 +253,6 @@ func GenerateProof(common_circuit_data string, proof_with_public_inputs string, 
 	}
 
 	bnProof := proof.(*groth16_bn254.Proof)
-	bnVk := vk
 	bnWitness := publicWitness.Vector().(fr.Vector)
 
 	original_proof_bytes, err := json.Marshal(&G16ProofWithPublicInputs{
@@ -268,25 +271,32 @@ func GenerateProof(common_circuit_data string, proof_with_public_inputs string, 
 	}
 	fmt.Println("proofString", string(original_proof_bytes))
 	fmt.Println("vkString", string(original_vk_bytes))
+	_ = bnWitness
 
-	proof_city, err := serialize.ToJsonCityProof(bnProof, bnWitness)
+	// Add Solidity-ready EIP-197 proof/input arrays directly from BN254 coordinates.
+	var proofMap map[string]interface{}
+	if err := json.Unmarshal(original_proof_bytes, &proofMap); err != nil {
+		panic(err)
+	}
+	proofMap["solidity_proof"] = [8]string{
+		"0x" + fpHex(&bnProof.Ar.X),
+		"0x" + fpHex(&bnProof.Ar.Y),
+		"0x" + fpHex(&bnProof.Bs.X.A1),
+		"0x" + fpHex(&bnProof.Bs.X.A0),
+		"0x" + fpHex(&bnProof.Bs.Y.A1),
+		"0x" + fpHex(&bnProof.Bs.Y.A0),
+		"0x" + fpHex(&bnProof.Krs.X),
+		"0x" + fpHex(&bnProof.Krs.Y),
+	}
+	proofMap["solidity_public_inputs"] = [2]string{
+		fmt.Sprintf("0x%064x", hi),
+		fmt.Sprintf("0x%064x", lo),
+	}
+	augmentedProofBytes, err := json.Marshal(proofMap)
 	if err != nil {
 		panic(err)
 	}
-	proof_bytes, err := json.Marshal(&proof_city)
-	if err != nil {
-		panic(err)
-	}
-	vk_city, err := serialize.ToJsonCityVK(bnVk)
-	if err != nil {
-		panic(err)
-	}
-	vk_bytes, err := json.Marshal(&vk_city)
-	if err != nil {
-		panic(err)
-	}
-
-	return string(proof_bytes), string(vk_bytes)
+	return string(augmentedProofBytes), string(original_vk_bytes)
 
 }
 
@@ -324,26 +334,14 @@ func debugUnsatisfiedConstraint(ccs constraint.ConstraintSystem, wit witness.Wit
 }
 
 func VerifyProof(proofString string, vkString string) string {
-	var cityProof serialize.CityGroth16ProofData
-	var cityVk serialize.CityGroth16VerifierData
-
-	if err := json.Unmarshal([]byte(proofString), &cityProof); err != nil {
+	g16ProofWithPublicInputs := NewG16ProofWithPublicInputs()
+	if err := json.Unmarshal([]byte(proofString), g16ProofWithPublicInputs); err != nil {
 		fmt.Println(err)
 		return "false"
 	}
 
-	g16ProofWithPublicInputs, err := FromCityProof(cityProof)
-	if err != nil {
-		fmt.Println(err)
-		return "false"
-	}
-
-	if err := json.Unmarshal([]byte(vkString), &cityVk); err != nil {
-		fmt.Println(err)
-		return "false"
-	}
-	g16VerifyingKey, err := FromCityVk(cityVk)
-	if err != nil {
+	g16VerifyingKey := NewG16VerifyingKey()
+	if err := json.Unmarshal([]byte(vkString), g16VerifyingKey); err != nil {
 		fmt.Println(err)
 		return "false"
 	}
@@ -402,19 +400,19 @@ func Setup(circuit *CRVerifierCircuit, keystore_path string) (*constraint.Constr
 		fmt.Printf("[setup] groth16.Setup took %s\n", time.Since(t))
 
 		t = time.Now()
-		if err := WriteCircuit(ccs, keystore_path+CIRCUIT_PATH); err != nil {
+		if err := WriteCircuit(ccs, filepath.Join(keystore_path, CIRCUIT_PATH)); err != nil {
 			return nil, nil, nil, err
 		}
 		fmt.Printf("[setup] WriteCircuit took %s\n", time.Since(t))
 
 		t = time.Now()
-		if err := WriteVerifyingKey(vk, keystore_path+VK_PATH); err != nil {
+		if err := WriteVerifyingKey(vk, filepath.Join(keystore_path, VK_PATH)); err != nil {
 			return nil, nil, nil, err
 		}
 		fmt.Printf("[setup] WriteVerifyingKey took %s\n", time.Since(t))
 
 		t = time.Now()
-		if err := WriteProvingKey(pk, keystore_path+PK_PATH); err != nil {
+		if err := WriteProvingKey(pk, filepath.Join(keystore_path, PK_PATH)); err != nil {
 			return nil, nil, nil, err
 		}
 		fmt.Printf("[setup] WriteProvingKey took %s\n", time.Since(t))
