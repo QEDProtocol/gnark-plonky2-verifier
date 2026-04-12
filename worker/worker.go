@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	gl "github.com/cf/gnark-plonky2-verifier/goldilocks"
@@ -41,11 +42,8 @@ type PreparedCircuit struct {
 	CCS  *constraint.ConstraintSystem
 }
 
-var prepCircuit1 = PreparedCircuit{
-	PKey: nil,
-	VKey: nil,
-	CCS:  nil,
-}
+var prepCircuits = map[string]*PreparedCircuit{}
+var prepCircuitsMu sync.Mutex
 
 func Initialize(keystore_path string) {
 	fmt.Println("Initializing...", time.Now().Format("2006-01-02 15:04:05"))
@@ -70,9 +68,13 @@ func Initialize(keystore_path string) {
 		panic(err)
 	}
 
-	prepCircuit1.CCS = &ccs
-	prepCircuit1.PKey = pk.(*groth16_bn254.ProvingKey)
-	prepCircuit1.VKey = vk.(*groth16_bn254.VerifyingKey)
+	prepCircuitsMu.Lock()
+	defer prepCircuitsMu.Unlock()
+	prepCircuits[keystore_path] = &PreparedCircuit{
+		CCS:  &ccs,
+		PKey: pk.(*groth16_bn254.ProvingKey),
+		VKey: vk.(*groth16_bn254.VerifyingKey),
+	}
 	fmt.Println("Initializing End...", time.Now().Format("2006-01-02 15:04:05"))
 }
 
@@ -92,8 +94,8 @@ func (c *CRVerifierCircuit) Define(api frontend.API) error {
 	if len(c.PublicInputs) != 2 {
 		panic("invalid public inputs, should contain 2 BN254 elements")
 	}
-	if len(c.OriginalPublicInputs) != 52*64 {
-		panic("invalid original public inputs, should contain 3328 goldilocks elements (52 * 64 LE bits)")
+	if len(c.OriginalPublicInputs) == 0 || len(c.OriginalPublicInputs)%64 != 0 {
+		panic("invalid original public inputs, expected a non-empty multiple of 64 LE bits")
 	}
 
 	keccak, err := sha3.NewLegacyKeccak256(api)
@@ -101,9 +103,10 @@ func (c *CRVerifierCircuit) Define(api frontend.API) error {
 		return err
 	}
 
-	// Pack 3328 LE bits (52 field elements × 64 bits) into 416 bytes (big-endian per u64)
-	allBytes := make([]uints.U8, 0, 416)
-	for i := 0; i < 52; i++ {
+	// Pack LE bits (grouped as Goldilocks 64-bit limbs) into big-endian bytes.
+	limbCount := len(c.OriginalPublicInputs) / 64
+	allBytes := make([]uints.U8, 0, limbCount*8)
+	for i := 0; i < limbCount; i++ {
 		// 64 LE bits for field element i, pack into 8 big-endian bytes
 		for b := 0; b < 8; b++ {
 			// big-endian byte b corresponds to bits at offset (7-b)*8
@@ -160,9 +163,13 @@ func GenerateProof(common_circuit_data string, proof_with_public_inputs string, 
 	rawProofWithPis := types.ReadProofWithPublicInputsRaw(proof_with_public_inputs)
 	proofWithPis := variables.DeserializeProofWithPublicInputs(rawProofWithPis)
 
-	// Pack 3328 LE bits (52 field elements × 64 bits) back into 416 bytes (big-endian per u64)
-	buf := make([]byte, 416)
-	for i := 0; i < 52; i++ {
+	// Pack LE bits (grouped as Goldilocks 64-bit limbs) back into big-endian bytes.
+	if len(rawProofWithPis.PublicInputs) == 0 || len(rawProofWithPis.PublicInputs)%64 != 0 {
+		panic("invalid original public inputs, expected a non-empty multiple of 64 LE bits")
+	}
+	limbCount := len(rawProofWithPis.PublicInputs) / 64
+	buf := make([]byte, limbCount*8)
+	for i := 0; i < limbCount; i++ {
 		var val uint64
 		for j := 0; j < 64; j++ {
 			if rawProofWithPis.PublicInputs[i*64+j] == 1 {
@@ -354,8 +361,10 @@ func VerifyProof(proofString string, vkString string) string {
 }
 
 func Setup(circuit *CRVerifierCircuit, keystore_path string) (*constraint.ConstraintSystem, *groth16_bn254.ProvingKey, *groth16_bn254.VerifyingKey, error) {
-	if prepCircuit1.CCS != nil && prepCircuit1.PKey != nil && prepCircuit1.VKey != nil {
-		return prepCircuit1.CCS, prepCircuit1.PKey, prepCircuit1.VKey, nil
+	prepCircuitsMu.Lock()
+	defer prepCircuitsMu.Unlock()
+	if c, ok := prepCircuits[keystore_path]; ok && c.CCS != nil && c.PKey != nil && c.VKey != nil {
+		return c.CCS, c.PKey, c.VKey, nil
 	}
 	fmt.Println("you have to initialize all the keys first")
 	if CheckKeysExist(keystore_path) {
@@ -380,9 +389,11 @@ func Setup(circuit *CRVerifierCircuit, keystore_path string) (*constraint.Constr
 		}
 		fmt.Printf("[setup] ReadProvingKey took %s\n", time.Since(t))
 
-		prepCircuit1.CCS = &ccs
-		prepCircuit1.PKey = pk.(*groth16_bn254.ProvingKey)
-		prepCircuit1.VKey = vk.(*groth16_bn254.VerifyingKey)
+		prepCircuits[keystore_path] = &PreparedCircuit{
+			CCS:  &ccs,
+			PKey: pk.(*groth16_bn254.ProvingKey),
+			VKey: vk.(*groth16_bn254.VerifyingKey),
+		}
 	} else {
 		t := time.Now()
 		ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, circuit)
@@ -417,10 +428,13 @@ func Setup(circuit *CRVerifierCircuit, keystore_path string) (*constraint.Constr
 		}
 		fmt.Printf("[setup] WriteProvingKey took %s\n", time.Since(t))
 
-		prepCircuit1.CCS = &ccs
-		prepCircuit1.PKey = pk.(*groth16_bn254.ProvingKey)
-		prepCircuit1.VKey = vk.(*groth16_bn254.VerifyingKey)
+		prepCircuits[keystore_path] = &PreparedCircuit{
+			CCS:  &ccs,
+			PKey: pk.(*groth16_bn254.ProvingKey),
+			VKey: vk.(*groth16_bn254.VerifyingKey),
+		}
 	}
 
-	return prepCircuit1.CCS, prepCircuit1.PKey, prepCircuit1.VKey, nil
+	c := prepCircuits[keystore_path]
+	return c.CCS, c.PKey, c.VKey, nil
 }
