@@ -92,8 +92,8 @@ func (c *CRVerifierCircuit) Define(api frontend.API) error {
 	if len(c.PublicInputs) != 2 {
 		panic("invalid public inputs, should contain 2 BN254 elements")
 	}
-	if len(c.OriginalPublicInputs) != 52*64 {
-		panic("invalid original public inputs, should contain 3328 goldilocks elements (52 * 64 LE bits)")
+	if len(c.OriginalPublicInputs) != 17*64 {
+		panic("invalid original public inputs, should contain 1088 goldilocks elements (17 * 64 LE bits)")
 	}
 
 	keccak, err := sha3.NewLegacyKeccak256(api)
@@ -101,9 +101,9 @@ func (c *CRVerifierCircuit) Define(api frontend.API) error {
 		return err
 	}
 
-	// Pack 3328 LE bits (52 field elements × 64 bits) into 416 bytes (big-endian per u64)
-	allBytes := make([]uints.U8, 0, 416)
-	for i := 0; i < 52; i++ {
+	// Pack 1088 LE bits (17 field elements × 64 bits) into 136 bytes (big-endian per u64)
+	allBytes := make([]uints.U8, 0, 136)
+	for i := 0; i < 17; i++ {
 		// 64 LE bits for field element i, pack into 8 big-endian bytes
 		for b := 0; b < 8; b++ {
 			// big-endian byte b corresponds to bits at offset (7-b)*8
@@ -150,7 +150,7 @@ func initKeyStorePath(keystore_path string) {
 	}
 }
 
-func GenerateProof(common_circuit_data string, proof_with_public_inputs string, verifier_only_circuit_data string, keystore_path string) (string, string) {
+func PrepareCircuit(common_circuit_data string, proof_with_public_inputs string, verifier_only_circuit_data string, keystore_path string) (*constraint.ConstraintSystem, *groth16_bn254.ProvingKey, *groth16_bn254.VerifyingKey, witness.Witness) {
 	initKeyStorePath(keystore_path)
 
 	commonCircuitData := types.ReadCommonCircuitDataRaw(common_circuit_data)
@@ -160,9 +160,9 @@ func GenerateProof(common_circuit_data string, proof_with_public_inputs string, 
 	rawProofWithPis := types.ReadProofWithPublicInputsRaw(proof_with_public_inputs)
 	proofWithPis := variables.DeserializeProofWithPublicInputs(rawProofWithPis)
 
-	// Pack 3328 LE bits (52 field elements × 64 bits) back into 416 bytes (big-endian per u64)
-	buf := make([]byte, 416)
-	for i := 0; i < 52; i++ {
+	// Pack 1088 LE bits (17 field elements × 64 bits) back into 136 bytes (big-endian per u64)
+	buf := make([]byte, 136)
+	for i := 0; i < 17; i++ {
 		var val uint64
 		for j := 0; j < 64; j++ {
 			if rawProofWithPis.PublicInputs[i*64+j] == 1 {
@@ -222,9 +222,17 @@ func GenerateProof(common_circuit_data string, proof_with_public_inputs string, 
 	}
 	fmt.Printf("[prove] debugUnsatisfiedConstraint took %s\n", time.Since(t))
 
+	return cs, pk, vk, wit
+}
+
+func GenerateProof(common_circuit_data string, proof_with_public_inputs string, verifier_only_circuit_data string, keystore_path string) (string, string) {
+	cs, pk, vk, wit := PrepareCircuit(common_circuit_data, proof_with_public_inputs, verifier_only_circuit_data, keystore_path)
+
 	var proof groth16.Proof
 	var publicWitness witness.Witness
 	var retries = 0
+	var t time.Time
+	var err error
 
 	for {
 		t = time.Now()
@@ -334,14 +342,25 @@ func debugUnsatisfiedConstraint(ccs constraint.ConstraintSystem, wit witness.Wit
 }
 
 func VerifyProof(proofString string, vkString string) string {
+<<<<<<< HEAD
 	g16ProofWithPublicInputs := NewG16ProofWithPublicInputs()
 	if err := json.Unmarshal([]byte(proofString), g16ProofWithPublicInputs); err != nil {
+=======
+	var g16ProofWithPublicInputs G16ProofWithPublicInputs
+	var g16VerifyingKey G16VerifyingKey
+
+	if err := json.Unmarshal([]byte(proofString), &g16ProofWithPublicInputs); err != nil {
+>>>>>>> logere/feat/bridge
 		fmt.Println(err)
 		return "false"
 	}
 
+<<<<<<< HEAD
 	g16VerifyingKey := NewG16VerifyingKey()
 	if err := json.Unmarshal([]byte(vkString), g16VerifyingKey); err != nil {
+=======
+	if err := json.Unmarshal([]byte(vkString), &g16VerifyingKey); err != nil {
+>>>>>>> logere/feat/bridge
 		fmt.Println(err)
 		return "false"
 	}
