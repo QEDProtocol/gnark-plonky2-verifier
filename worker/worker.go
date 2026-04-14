@@ -164,9 +164,15 @@ func PrepareCircuit(common_circuit_data string, proof_with_public_inputs string,
 	rawProofWithPis := types.ReadProofWithPublicInputsRaw(proof_with_public_inputs)
 	proofWithPis := variables.DeserializeProofWithPublicInputs(rawProofWithPis)
 
-	// Pack 1088 LE bits (17 field elements × 64 bits) back into 136 bytes (big-endian per u64)
-	buf := make([]byte, 136)
-	for i := 0; i < 17; i++ {
+	// Pack LE bits (N field elements × 64 bits) back into bytes (big-endian per u64).
+	// Public input count is circuit-dependent, so this must be dynamic.
+	piBits := len(rawProofWithPis.PublicInputs)
+	if piBits%64 != 0 {
+		panic(fmt.Sprintf("invalid public input bit length: %d (must be multiple of 64)", piBits))
+	}
+	piWords := piBits / 64
+	buf := make([]byte, piWords*8)
+	for i := 0; i < piWords; i++ {
 		var val uint64
 		for j := 0; j < 64; j++ {
 			if rawProofWithPis.PublicInputs[i*64+j] == 1 {
