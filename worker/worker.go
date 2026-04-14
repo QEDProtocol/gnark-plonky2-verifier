@@ -35,6 +35,10 @@ func fpHex(x *fp.Element) string {
 	return fmt.Sprintf("%064x", x.BigInt(new(big.Int)))
 }
 
+func frHex(x *fr.Element) string {
+	return fmt.Sprintf("%064x", x.BigInt(new(big.Int)))
+}
+
 type PreparedCircuit struct {
 	PKey *groth16_bn254.ProvingKey
 	VKey *groth16_bn254.VerifyingKey
@@ -296,9 +300,12 @@ func GenerateProof(common_circuit_data string, proof_with_public_inputs string, 
 		"0x" + fpHex(&bnProof.Krs.X),
 		"0x" + fpHex(&bnProof.Krs.Y),
 	}
+	if len(bnWitness) < 2 {
+		panic("public witness must contain at least 2 public inputs")
+	}
 	proofMap["solidity_public_inputs"] = [2]string{
-		fmt.Sprintf("0x%064x", hi),
-		fmt.Sprintf("0x%064x", lo),
+		"0x" + frHex(&bnWitness[0]),
+		"0x" + frHex(&bnWitness[1]),
 	}
 	augmentedProofBytes, err := json.Marshal(proofMap)
 	if err != nil {
@@ -342,25 +349,15 @@ func debugUnsatisfiedConstraint(ccs constraint.ConstraintSystem, wit witness.Wit
 }
 
 func VerifyProof(proofString string, vkString string) string {
-<<<<<<< HEAD
-	g16ProofWithPublicInputs := NewG16ProofWithPublicInputs()
-	if err := json.Unmarshal([]byte(proofString), g16ProofWithPublicInputs); err != nil {
-=======
 	var g16ProofWithPublicInputs G16ProofWithPublicInputs
 	var g16VerifyingKey G16VerifyingKey
 
 	if err := json.Unmarshal([]byte(proofString), &g16ProofWithPublicInputs); err != nil {
->>>>>>> logere/feat/bridge
 		fmt.Println(err)
 		return "false"
 	}
 
-<<<<<<< HEAD
-	g16VerifyingKey := NewG16VerifyingKey()
-	if err := json.Unmarshal([]byte(vkString), g16VerifyingKey); err != nil {
-=======
 	if err := json.Unmarshal([]byte(vkString), &g16VerifyingKey); err != nil {
->>>>>>> logere/feat/bridge
 		fmt.Println(err)
 		return "false"
 	}
