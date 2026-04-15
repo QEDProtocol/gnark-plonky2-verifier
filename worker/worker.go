@@ -52,7 +52,7 @@ func Initialize(keystore_path string) {
 	var ccs constraint.ConstraintSystem
 	var err error
 	if !CheckKeysExist(keystore_path) {
-		panic("Initializing Keys not exist")
+		panic(fmt.Sprintf("keystore files are missing under %s; initialize expects an existing setup on disk", keystore_path))
 	}
 
 	ccs, err = ReadCircuit(ecc.BN254, filepath.Join(keystore_path, CIRCUIT_PATH))
@@ -362,12 +362,13 @@ func VerifyProof(proofString string, vkString string) string {
 
 func Setup(circuit *CRVerifierCircuit, keystore_path string) (*constraint.ConstraintSystem, *groth16_bn254.ProvingKey, *groth16_bn254.VerifyingKey, error) {
 	prepCircuitsMu.Lock()
-	defer prepCircuitsMu.Unlock()
 	if c, ok := prepCircuits[keystore_path]; ok && c.CCS != nil && c.PKey != nil && c.VKey != nil {
+		defer prepCircuitsMu.Unlock()
 		return c.CCS, c.PKey, c.VKey, nil
 	}
-	fmt.Println("you have to initialize all the keys first")
+	prepCircuitsMu.Unlock()
 	if CheckKeysExist(keystore_path) {
+		fmt.Printf("[setup] loading existing groth16 setup from %s\n", keystore_path)
 		t := time.Now()
 		ccs, err := ReadCircuit(ecc.BN254, filepath.Join(keystore_path, CIRCUIT_PATH))
 		if err != nil {
@@ -389,12 +390,18 @@ func Setup(circuit *CRVerifierCircuit, keystore_path string) (*constraint.Constr
 		}
 		fmt.Printf("[setup] ReadProvingKey took %s\n", time.Since(t))
 
+		prepCircuitsMu.Lock()
+		defer prepCircuitsMu.Unlock()
+		if c, ok := prepCircuits[keystore_path]; ok && c.CCS != nil && c.PKey != nil && c.VKey != nil {
+			return c.CCS, c.PKey, c.VKey, nil
+		}
 		prepCircuits[keystore_path] = &PreparedCircuit{
 			CCS:  &ccs,
 			PKey: pk.(*groth16_bn254.ProvingKey),
 			VKey: vk.(*groth16_bn254.VerifyingKey),
 		}
 	} else {
+		fmt.Printf("[setup] no groth16 setup found under %s; compiling circuit and generating a new setup\n", keystore_path)
 		t := time.Now()
 		ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, circuit)
 		if err != nil {
@@ -428,6 +435,11 @@ func Setup(circuit *CRVerifierCircuit, keystore_path string) (*constraint.Constr
 		}
 		fmt.Printf("[setup] WriteProvingKey took %s\n", time.Since(t))
 
+		prepCircuitsMu.Lock()
+		defer prepCircuitsMu.Unlock()
+		if c, ok := prepCircuits[keystore_path]; ok && c.CCS != nil && c.PKey != nil && c.VKey != nil {
+			return c.CCS, c.PKey, c.VKey, nil
+		}
 		prepCircuits[keystore_path] = &PreparedCircuit{
 			CCS:  &ccs,
 			PKey: pk.(*groth16_bn254.ProvingKey),

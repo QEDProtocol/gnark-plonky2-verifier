@@ -25,24 +25,67 @@ type Groth16ProofWithVK struct {
 	Vk    string
 }
 
+func newGroth16ProofWithVK(proof string, vk string) *C.Groth16ProofWithVK {
+	cProofWithVk := (*C.Groth16ProofWithVK)(C.malloc(C.sizeof_Groth16ProofWithVK))
+	cProofWithVk.proof = C.CString(proof)
+	cProofWithVk.vk = C.CString(vk)
+	return cProofWithVk
+}
+
 //export GenerateGroth16Proof
 func GenerateGroth16Proof(common_circuit_data *C.char, proof_with_public_inputs *C.char, verifier_only_circuit_data *C.char, keystore_path *C.char) *C.Groth16ProofWithVK {
-	proof_str, vk_str := worker.GenerateProof(C.GoString(common_circuit_data), C.GoString(proof_with_public_inputs), C.GoString(verifier_only_circuit_data), C.GoString(keystore_path))
+	defer func() {
+		if r := recover(); r != nil {
+			panic(fmt.Sprintf("GenerateGroth16Proof panic escaped recover: %v", r))
+		}
+	}()
 
-	cProofWithVk := (*C.Groth16ProofWithVK)(C.malloc(C.sizeof_Groth16ProofWithVK))
-	cProofWithVk.proof = C.CString(proof_str)
-	cProofWithVk.vk = C.CString(vk_str)
-	return cProofWithVk
+	proofStr := ""
+	vkStr := ""
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				proofStr = fmt.Sprintf("error: %v", r)
+				vkStr = ""
+			}
+		}()
+		proofStr, vkStr = worker.GenerateProof(
+			C.GoString(common_circuit_data),
+			C.GoString(proof_with_public_inputs),
+			C.GoString(verifier_only_circuit_data),
+			C.GoString(keystore_path),
+		)
+	}()
+
+	return newGroth16ProofWithVK(proofStr, vkStr)
 }
 
 //export GenerateGroth16ProofFromJson
 func GenerateGroth16ProofFromJson(common_circuit_data_json *C.char, proof_with_public_inputs_json *C.char, verifier_only_circuit_data_json *C.char, keystore_path *C.char) *C.Groth16ProofWithVK {
-	proof_str, vk_str := worker.GenerateProof(C.GoString(common_circuit_data_json), C.GoString(proof_with_public_inputs_json), C.GoString(verifier_only_circuit_data_json), C.GoString(keystore_path))
+	defer func() {
+		if r := recover(); r != nil {
+			panic(fmt.Sprintf("GenerateGroth16ProofFromJson panic escaped recover: %v", r))
+		}
+	}()
 
-	cProofWithVk := (*C.Groth16ProofWithVK)(C.malloc(C.sizeof_Groth16ProofWithVK))
-	cProofWithVk.proof = C.CString(proof_str)
-	cProofWithVk.vk = C.CString(vk_str)
-	return cProofWithVk
+	proofStr := ""
+	vkStr := ""
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				proofStr = fmt.Sprintf("error: %v", r)
+				vkStr = ""
+			}
+		}()
+		proofStr, vkStr = worker.GenerateProof(
+			C.GoString(common_circuit_data_json),
+			C.GoString(proof_with_public_inputs_json),
+			C.GoString(verifier_only_circuit_data_json),
+			C.GoString(keystore_path),
+		)
+	}()
+
+	return newGroth16ProofWithVK(proofStr, vkStr)
 }
 
 //export VerifyGroth16Proof

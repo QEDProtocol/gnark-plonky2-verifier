@@ -40,12 +40,19 @@ pub fn wrap_plonky2_proof(
     if let Some(save_wrapped_data_path) = save_wrapped_data_path {
         wrapped_proof.save(save_wrapped_data_path)?;
     }
-    Ok(gnark_plonky2_verifier_ffi::generate_groth16_proof(
+    let (proof, vk) = gnark_plonky2_verifier_ffi::generate_groth16_proof(
         &json(&wrapped_proof.common_data)?,
         &json(&wrapped_proof.proof)?,
         &json(&wrapped_proof.verifier_data)?,
-        id
-    ))
+        id,
+    );
+    if proof.starts_with("error:") {
+        anyhow::bail!("generate_groth16_proof failed: {}", proof);
+    }
+    if vk.starts_with("error:") {
+        anyhow::bail!("generate_groth16_proof failed: {}", vk);
+    }
+    Ok((proof, vk))
 }
 
 pub fn verify_groth16_proof(
@@ -76,12 +83,19 @@ pub fn generate_groth16_proof_from_json(
     verifier_only_circuit_data_json: &str,
     keystore_path: &str,
 ) -> anyhow::Result<(String, String)> {
-    Ok(gnark_plonky2_verifier_ffi::generate_groth16_proof_from_json(
+    let (proof, vk) = gnark_plonky2_verifier_ffi::generate_groth16_proof_from_json(
         common_circuit_data_json,
         proof_with_public_inputs_json,
         verifier_only_circuit_data_json,
         keystore_path,
-    ))
+    );
+    if proof.starts_with("error:") {
+        anyhow::bail!("generate_groth16_proof_from_json failed: {}", proof);
+    }
+    if vk.starts_with("error:") {
+        anyhow::bail!("generate_groth16_proof_from_json failed: {}", vk);
+    }
+    Ok((proof, vk))
 }
 
 #[cfg(test)]
