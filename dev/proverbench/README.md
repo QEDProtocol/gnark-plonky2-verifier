@@ -6,6 +6,8 @@
 MSM 接口和 GPU 实验适配已运行验证，见 [GPU.md](GPU.md)。不存在自动测试、定时任务或服务。
 后续已接入可选 `--gpu-h` 完整 computeH，默认仍是 CPU H＋GPU MSM。固定二进制BAAB与间隔回放共108份真实证明通过；Go Prove中位数较既有4块GPU MSM配置降低30.0%–43.4%。35个空闲窗口进程显存均230MiB，完整口径与限制见 [GPU.md](GPU.md)。此前受干扰的profile仍不作为性能基线。
 
+本轮核心GPU调优已收尾，实现提交为 `1a58679`。下一阶段为实际Rust FFI/prove proxy集成及长时、并发、错误恢复验收；尚未部署生产。参数加载约100秒保留为独立待办。
+
 基于线上 wrapper commit `aebd3683cd6a2bcf83113113c142344e94d05367` 的独立本地 clone，分支
 `lab/groth16-benchmark-20260924`。原有工作目录和生产部署没有改动。
 Go 1.22.3，原 `go.mod/go.sum`，独立编译缓存、二进制与结果目录。

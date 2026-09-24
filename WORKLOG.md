@@ -252,3 +252,13 @@ RSS高水位16.137GiB，后段回落，Go堆随GC下降，swap=0；有限回放�
 最终gnark三补丁、ICICLE六补丁重放与指纹相同；Python统计测试通过，所有原始证据私有归档。
 性能和内存分析入口：`dev/proverbench/analyze_gpu_h.py`、`analyze_gpu_h_memory.py`。
 实际FFI集成、更多场景/长时并发和参数加载优化继续作为后续工作；未部署。
+
+## 本轮优化收尾
+
+用户确认本轮核心GPU调优收尾，提交最终代码与过程记录。实现固定在 `1a58679`，本次仅补归档结论，不修改计算路径或重跑性能实验。
+过程包含独立Go基线与观测框架、MSM流水线同步/清理修复、4块配置验证、FFT定位、完整GPU computeH及NTT域释放修复。
+bridge最初约7秒、当前约2.2秒属于不同轮次的阶段性结果；采用同一二进制的最新配对确认GPU H额外降低43.4%，不将历史收益相乘。
+最终108份真实证明全部通过，性能、内存、失败路径、依赖补丁与原始证据索引已归档至
+[psy-memory完整报告](https://github.com/PsyProtocol/psy-memory/blob/feat/rollback-delete/prove_proxy/gpu-computeh-20260924.md)。
+下一阶段按生产交付推进：实际Rust FFI/prove proxy集成、完整请求计时、长时/并发/错误恢复验收，再评估灰度部署。
+当前仍为独立实验分支，GPU H显式开启；参数加载优化独立后置。
