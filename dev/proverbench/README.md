@@ -4,7 +4,7 @@
 首轮CPU/GPU各27份对照已完成，详细阶段及局限见GPU.md。
 旧版 CPU 框架 5 项测试通过，累计 63 次真实样本证明验证成功；正式计时受其他负载干扰，不能作为干净基线。
 MSM 接口和 GPU 实验适配已运行验证，见 [GPU.md](GPU.md)。不存在自动测试、定时任务或服务。
-后续已补 computeH/MSM 排队与执行分项计时；新增18份真实证明验证通过，以及12项独立GPU NTT兼容性检查通过。FFT仍在CPU执行，NTT尚未接入prover。受同机CPU负载影响，本轮profile不作为新的性能基线。
+后续已接入可选 `--gpu-h` 完整 computeH，默认仍是 CPU H＋GPU MSM。固定二进制BAAB与间隔回放共108份真实证明通过；Go Prove中位数较既有4块GPU MSM配置降低30.0%–43.4%。35个空闲窗口进程显存均230MiB，完整口径与限制见 [GPU.md](GPU.md)。此前受干扰的profile仍不作为性能基线。
 
 基于线上 wrapper commit `aebd3683cd6a2bcf83113113c142344e94d05367` 的独立本地 clone，分支
 `lab/groth16-benchmark-20260924`。原有工作目录和生产部署没有改动。

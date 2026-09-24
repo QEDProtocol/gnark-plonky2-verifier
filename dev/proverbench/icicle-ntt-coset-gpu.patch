@@ -1,0 +1,44 @@
+--- a/icicle/backend/cuda/src/ntt/ntt.cuh
++++ b/icicle/backend/cuda/src/ntt/ntt.cuh
+@@ -41,6 +41,15 @@
+     // size limited by on-device memory
+     const uint32_t MAX_SHARED_MEM_ELEMENT_SIZE = 32; // TODO: occupancy calculator, hardcoded for sm_86..sm_89
+     const uint32_t MAX_SHARED_MEM = MAX_SHARED_MEM_ELEMENT_SIZE * MAX_NUM_THREADS;
++
++    // Compute arbitrary coset powers on the same CUDA stream as the NTT.
++    // Each output depends only on its index; no cross-thread synchronization.
++    template <typename S>
++    __global__ void coset_powers_kernel(S generator, S* powers, int size)
++    {
++      const int index = blockIdx.x * blockDim.x + threadIdx.x;
++      if (index < size) powers[index] = S::pow(generator, index);
++    }
+ 
+     template <typename E>
+     __global__ void reverse_order_kernel(const E* arr, E* arr_reversed, uint32_t n, uint32_t logn, uint32_t batch_size)
+@@ -694,16 +703,17 @@
+     try {
+       coset_index = domain.coset_index.at(config.coset_gen);
+     } catch (...) {
+-      // if coset index is not found in the subgroup, compute coset powers on CPU and move them to device
+-      std::vector<S> h_coset;
+-      h_coset.push_back(S::one());
++      // An arbitrary coset generator need not lie in the root-of-unity subgroup.
++      // Avoid rebuilding a large serial CPU vector for every coset transform.
+       S coset_gen = (dir == NTTDir::kInverse) ? S::inverse(config.coset_gen) : config.coset_gen;
+-      for (int i = 1; i < size; i++) {
+-        h_coset.push_back(h_coset.at(i - 1) * coset_gen);
+-      }
+       CHK_IF_RETURN(cudaMallocAsync(&coset, size * sizeof(S), cuda_stream));
+-      CHK_IF_RETURN(cudaMemcpyAsync(coset, &h_coset.front(), size * sizeof(S), cudaMemcpyHostToDevice, cuda_stream));
+-      h_coset.clear();
++      coset_powers_kernel<<<(size + 255) / 256, 256, 0, cuda_stream>>>(coset_gen, coset, size);
++      const cudaError_t launch_status = cudaGetLastError();
++      if (launch_status != cudaSuccess) {
++        // This allocation belongs to this call, including launch failures.
++        cudaFreeAsync(coset, cuda_stream);
++        return launch_status;
++      }
+     }
+ 
+     const bool is_inverse = dir == NTTDir::kInverse;

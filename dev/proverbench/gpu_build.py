@@ -59,6 +59,7 @@ def prepare(args):
             p.chmod(0o755 if p.is_dir() else 0o644)
         subprocess.run(['patch', '--batch', '-p1', '-i', str(HERE / 'gnark-msm.patch')], cwd=gnark, check=True)
         subprocess.run(['patch', '--batch', '-p1', '-i', str(HERE / 'gnark-h-timing.patch')], cwd=gnark, check=True)
+        subprocess.run(['patch', '--batch', '-p1', '-i', str(HERE / 'gnark-h-backend.patch')], cwd=gnark, check=True)
     if args.gpu and not (DEPS / 'icicle-gnark').exists():
         if not args.fetch:
             raise ValueError('ICICLE missing; use prepare --gpu --fetch to explicitly download pinned source')
@@ -72,6 +73,8 @@ def prepare(args):
         subprocess.run(['patch', '--batch', '-p1', '-i', str(HERE / 'icicle-cuda-build.patch')], cwd=target, check=True)
         subprocess.run(['patch', '--batch', '-p1', '-i', str(HERE / 'icicle-msm-stream-dependency.patch')], cwd=target, check=True)
         subprocess.run(['patch', '--batch', '-p1', '-i', str(HERE / 'icicle-msm-chunk-cleanup.patch')], cwd=target, check=True)
+        subprocess.run(['patch', '--batch', '-p1', '-i', str(HERE / 'icicle-ntt-domain-release.patch')], cwd=target, check=True)
+        subprocess.run(['patch', '--batch', '-p1', '-i', str(HERE / 'icicle-ntt-coset-gpu.patch')], cwd=target, check=True)
     print(json.dumps({'dependencies': verify_dependencies(args.gpu), 'workload_executed': False}))
 
 

@@ -142,22 +142,29 @@ def check(args):
     out.mkdir(parents=True, mode=0o700, exist_ok=False)
     lab.write_json(out / 'check.json', {'build': build, 'gpu': card, 'synthetic_only': True,
                                       'pipeline': args.pipeline, 'chunk_timing': args.chunk_timing,
-                                      'ntt': args.ntt})
-    test_filter = '^TestICICLE'
+                                      'ntt': args.ntt, 'h': args.h, 'h_large': args.h_large,
+                                      'domain_memory': args.domain_memory})
+    test_filter = '^(TestICICLE|TestMSMHook)'
     if args.pipeline:
         test_filter = '^TestICICLEMSMPipeline$'
     elif args.chunk_timing:
         test_filter = '^TestICICLEMSMChunkTiming$'
+    elif args.domain_memory:
+        test_filter = '^TestICICLENTTDomainMemory$'
+    elif args.h or args.h_large:
+        test_filter = '^TestICICLEComputeH$'
     elif args.ntt:
         test_filter = '^TestICICLENTTVectors$'
     cmd = ['bwrap', '--die-with-parent', '--new-session', '--unshare-net',
            '--ro-bind', '/', '/', '--bind', str(out), str(out), '--tmpfs', '/tmp',
            '--proc', '/proc', '--dev', '/dev', '--clearenv',
-           '--setenv', 'HOME', '/tmp', '--setenv', 'GOMAXPROCS', '2',
+           '--setenv', 'HOME', '/tmp', '--setenv', 'GOMAXPROCS', '8' if args.h_large else '2',
            *sandbox_args(build, card), '--setenv', 'PROVERBENCH_GPU_TEST', '1',
            '--setenv', 'PROVERBENCH_BACKEND_DIR', str(Path(build['library_dir']) / 'backend'),
            '--setenv', 'PROVERBENCH_PIPELINE', '1' if args.pipeline else '0',
            '--setenv', 'PROVERBENCH_CHUNK_TIMING', '1' if args.chunk_timing else '0',
+           '--setenv', 'PROVERBENCH_H_TEST', 'large' if args.h_large else ('small' if args.h else ''),
+           '--setenv', 'PROVERBENCH_DOMAIN_TEST', '1' if args.domain_memory else '0',
            '--setenv', 'PROVERBENCH_NTT_TEST', '1' if args.ntt else '0',
            '--', str(binary), '-test.v', '-test.timeout=10m',
            '-test.run=' + test_filter]
@@ -177,5 +184,8 @@ if __name__ == '__main__':
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--pipeline', action='store_true')
     mode.add_argument('--chunk-timing', action='store_true')
+    mode.add_argument('--h', action='store_true')
+    mode.add_argument('--domain-memory', action='store_true')
+    mode.add_argument('--h-large', action='store_true')
     mode.add_argument('--ntt', action='store_true')
     raise SystemExit(check(parser.parse_args()))

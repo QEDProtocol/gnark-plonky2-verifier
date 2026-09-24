@@ -188,6 +188,8 @@ def run(args):
     if args.cycles < 1 or args.warmup < 0 or args.interval < 0 or args.sample_interval < 0 or args.gomaxprocs < 1:
         raise ValueError('invalid run configuration')
     gpu = args.backend == 'icicle-msm'
+    if args.gpu_h and not gpu:
+        raise ValueError('--gpu-h requires icicle-msm')
     if args.msm_internal_chunks not in (1,2,4,8):
         raise ValueError('invalid internal chunks')
     if args.cpu_control and args.backend != 'cpu-msm':
@@ -232,7 +234,7 @@ def run(args):
     shutil.copy2(binary, out / 'proverbench')
     config = {k: getattr(args, k) for k in ('backend', 'scenario', 'sample', 'cycles', 'warmup', 'interval',
               'sample_interval', 'gomaxprocs', 'gogc', 'gomemlimit', 'gc_between', 'profile',
-              'gpu_uuid', 'msm_chunk_size', 'msm_internal_chunks', 'gpu_sample_interval', 'cpu_control')}
+              'gpu_uuid', 'msm_chunk_size', 'msm_internal_chunks', 'gpu_sample_interval', 'cpu_control', 'gpu_h')}
     info = {'config': config, 'samples': samples, 'input_sha256': hashes, 'build': build_info,
             'host': os.uname().nodename, 'kernel': os.uname().release,
             'cpu_model': next((x.split(':', 1)[1].strip() for x in Path('/proc/cpuinfo').read_text().splitlines() if x.startswith('model name')), 'unknown'),
@@ -250,6 +252,8 @@ def run(args):
         cmd += ['--device', '0', '--msm-chunk-size', str(args.msm_chunk_size),
                 '--msm-internal-chunks', str(args.msm_internal_chunks),
                 '--backend-dir', str(Path(build_info['library_dir']) / 'backend')]
+    if args.gpu_h:
+        cmd.append('--gpu-h')
     if args.gc_between:
         cmd.append('--gc-between')
     if args.profile:
@@ -322,7 +326,7 @@ def compare(paths):
             for key in ('uuid', 'driver_version', 'compute_cap'):
                 if m['gpu'].get(key) != base['gpu'].get(key):
                     mismatches.append(f'{p.name}: different GPU {key}')
-            for key in ('msm_chunk_size', 'msm_internal_chunks', 'gpu_sample_interval'):
+            for key in ('msm_chunk_size', 'msm_internal_chunks', 'gpu_sample_interval', 'gpu_h'):
                 if m['config'].get(key) != base['config'].get(key):
                     mismatches.append(f'{p.name}: different {key}')
         for key in ('input_sha256', 'samples', 'host', 'kernel', 'cpu_model', 'affinity'):
@@ -351,6 +355,7 @@ def main():
     r.add_argument('--gogc', default='100'); r.add_argument('--gomemlimit', default='off')
     r.add_argument('--gpu-uuid', default='', help='full physical GPU UUID; required for icicle-msm')
     r.add_argument('--cpu-control', action='store_true', help='run CPU MSM using the exact CUDA-linked binary, without GPU device mapping')
+    r.add_argument('--gpu-h', action='store_true')
     r.add_argument('--msm-internal-chunks', type=int, default=4, choices=[1,2,4,8])
     r.add_argument('--msm-chunk-size', type=int, default=1 << 20)
     r.add_argument('--gpu-sample-interval', type=float, default=2)

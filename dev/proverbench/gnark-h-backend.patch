@@ -1,0 +1,108 @@
+--- a/backend/groth16/bn254/prove.go
++++ b/backend/groth16/bn254/prove.go
+@@ -62,7 +62,7 @@
+ 
+ // Prove generates the proof of knowledge of a r1cs with full witness (secret + public part).
+ func Prove(r1cs *cs.R1CS, pk *ProvingKey, fullWitness witness.Witness, opts ...backend.ProverOption) (*Proof, error) {
+-	return proveWithMSM(r1cs, pk, fullWitness, nil, opts...)
++	return proveWithMSM(r1cs, pk, fullWitness, nil, nil, opts...)
+ }
+ 
+ // ProveWithMSM preserves this fork's solver, parameters and proof format.
+@@ -71,10 +71,19 @@
+ 	if engine == nil {
+ 		return nil, fmt.Errorf("MSM backend required")
+ 	}
+-	return proveWithMSM(r1cs, pk, fullWitness, engine, opts...)
+-}
+-
+-func proveWithMSM(r1cs *cs.R1CS, pk *ProvingKey, fullWitness witness.Witness, engine MSMBackend, opts ...backend.ProverOption) (*Proof, error) {
++	return proveWithMSM(r1cs, pk, fullWitness, engine, nil, opts...)
++}
++
++// ProveWithMSMAndH additionally replaces witness reduction. Neither backend may
++// retain inputs after returning; errors are returned without CPU fallback.
++func ProveWithMSMAndH(r1cs *cs.R1CS, pk *ProvingKey, fullWitness witness.Witness, engine MSMBackend, hEngine HBackend, opts ...backend.ProverOption) (*Proof, error) {
++	if engine == nil || hEngine == nil {
++		return nil, fmt.Errorf("MSM and H backends required")
++	}
++	return proveWithMSM(r1cs, pk, fullWitness, engine, hEngine, opts...)
++}
++
++func proveWithMSM(r1cs *cs.R1CS, pk *ProvingKey, fullWitness witness.Witness, engine MSMBackend, hEngine HBackend, opts ...backend.ProverOption) (*Proof, error) {
+ 	opt, err := backend.NewProverConfig(opts...)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("new prover config: %w", err)
+@@ -144,15 +153,23 @@
+ 
+ 	// H (witness reduction / FFT part)
+ 	var h []fr.Element
+-	chHDone := make(chan struct{}, 1)
++	var hErr error
++	chHDone := make(chan struct{})
+ 	go func() {
+ 		hStart := time.Now()
+-		h = computeH(solution.A, solution.B, solution.C, &pk.Domain)
++		if hEngine == nil {
++			h = computeH(solution.A, solution.B, solution.C, &pk.Domain)
++		} else {
++			h, hErr = hEngine.ComputeH(solution.A, solution.B, solution.C, &pk.Domain)
++			if hErr == nil && len(h) != int(pk.Domain.Cardinality) {
++				hErr = fmt.Errorf("invalid H output length")
++			}
++		}
+ 		log.Debug().Dur("took", time.Since(hStart)).Msg("proverbench compute H done")
+ 		solution.A = nil
+ 		solution.B = nil
+ 		solution.C = nil
+-		chHDone <- struct{}{}
++		close(chHDone)
+ 	}()
+ 
+ 	// we need to copy and filter the wireValues for each multi exp
+@@ -182,6 +199,10 @@
+ 		}
+ 		close(chWireValuesB)
+ 	}()
++
++	// Join H and witness filtering even if randomness or H fails. The caller
++	// can safely close GPU resources immediately after Prove returns.
++	defer func() { <-chHDone; <-chWireValuesA; <-chWireValuesB }()
+ 
+ 	// sample random r and s
+ 	var r, s big.Int
+@@ -314,6 +335,9 @@
+ 
+ 	// wait for FFT to end, as it uses all our CPUs
+ 	<-chHDone
++	if hErr != nil {
++		return nil, hErr
++	}
+ 
+ 	// schedule our proof part computations
+ 	var jobs sync.WaitGroup
+--- /dev/null
++++ b/backend/groth16/bn254/h_backend.go
+@@ -0,0 +1,22 @@
++// Experimental extension; the CPU reference calls the unchanged pinned implementation.
++package groth16
++
++import (
++	"fmt"
++	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
++	"github.com/consensys/gnark-crypto/ecc/bn254/fr/fft"
++)
++
++// HBackend returns exactly domain.Cardinality elements in bit-reversed order.
++// Inputs may be modified but must not be retained after return, including errors.
++type HBackend interface {
++	ComputeH(a, b, c []fr.Element, domain *fft.Domain) ([]fr.Element, error)
++}
++
++// ComputeHCPU exposes the original implementation as an independent test oracle.
++func ComputeHCPU(a, b, c []fr.Element, domain *fft.Domain) ([]fr.Element, error) {
++	if domain == nil || len(a) != len(b) || len(a) != len(c) || uint64(len(a)) > domain.Cardinality {
++		return nil, fmt.Errorf("invalid H input")
++	}
++	return computeH(a, b, c, domain), nil
++}

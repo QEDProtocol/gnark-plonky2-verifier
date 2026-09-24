@@ -5,6 +5,6 @@
   "icicle_revision": "b62bbbe518a73214da10ece26969ad55e6fa0cd0",
   "icicle_tag": "v3.2.2",
   "gnark_original_sha256": "8901ace7bcff5d9f459be2ece207c0ed3b2218fdd18d857cf99ed1da6741629f",
-  "gnark_patched_sha256": "788c13f3eb616e082c3f6d37f9821b238dcfab8527b5a29dd8c1096c9447b15c",
-  "icicle-gnark_patched_sha256": "75c08d3ef1ae79c1ff8b2d6b1a0a85d53245164f29c7687324c265a7e9817b26"
+  "gnark_patched_sha256": "f16539ebe6b2ff7bc58d1188bad3c93bf1c0c5632aace5f74b5eda177406ca3c",
+  "icicle-gnark_patched_sha256": "989f365b12ecf33cb3f3f7ff3cf98c3d7fe4cde4069fd74d0962e9e86c6a97ed"
 }

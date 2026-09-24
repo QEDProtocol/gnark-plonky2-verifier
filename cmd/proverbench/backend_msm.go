@@ -23,8 +23,9 @@ type msmEngine interface {
 }
 type msmBackend struct {
 	cpuBackend
-	name   string
-	engine msmEngine
+	name    string
+	engine  msmEngine
+	hEngine native.HBackend
 }
 
 func (b *msmBackend) Name() string { return b.name }
@@ -38,6 +39,9 @@ func (b *msmBackend) Prove(c constraint.ConstraintSystem, p groth16.ProvingKey, 
 	if !ok {
 		return nil, errors.New("unsupported_key_type")
 	}
+	if b.hEngine != nil {
+		return native.ProveWithMSMAndH(r, pk, w, b.engine, b.hEngine)
+	}
 	return native.ProveWithMSM(r, pk, w, b.engine)
 }
 func newMSMBackend(name string, opt backendOptions) (proverBackend, error) {
@@ -49,7 +53,16 @@ func newMSMBackend(name string, opt backendOptions) (proverBackend, error) {
 			return nil, e
 		}
 	}
-	return &msmBackend{name: name, engine: &measuredMSM{inner: engine, r: opt.Recorder}}, nil
+	var hEngine native.HBackend
+	if opt.GPUH {
+		var ok bool
+		hEngine, ok = engine.(native.HBackend)
+		if !ok {
+			engine.Close()
+			return nil, errors.New("gpu_h_not_built")
+		}
+	}
+	return &msmBackend{name: name, engine: &measuredMSM{inner: engine, r: opt.Recorder}, hEngine: hEngine}, nil
 }
 
 type cpuMSM struct{}

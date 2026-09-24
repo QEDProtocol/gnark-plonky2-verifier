@@ -15,19 +15,6 @@ import (
 	intt "github.com/ingonyama-zk/icicle-gnark/v3/wrappers/golang/curves/bn254/ntt"
 )
 
-// NTT has no Montgomery-input flag. Convert explicitly and derive its root
-// from the existing gnark domain so both libraries use the same primitive root.
-func canonicalNTTScalar(v fr.Element) icurve.ScalarField {
-	words := v.Bits()
-	var limbs [8]uint32
-	for i, w := range words {
-		limbs[2*i], limbs[2*i+1] = uint32(w), uint32(w>>32)
-	}
-	var out icurve.ScalarField
-	out.FromLimbs(limbs[:])
-	return out
-}
-
 func TestICICLENTTVectors(t *testing.T) {
 	if os.Getenv("PROVERBENCH_GPU_TEST") != "1" || os.Getenv("PROVERBENCH_NTT_TEST") != "1" {
 		t.Skip("explicit NTT compatibility check required")

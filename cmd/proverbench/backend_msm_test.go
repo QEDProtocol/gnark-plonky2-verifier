@@ -12,7 +12,9 @@ import (
 	"github.com/consensys/gnark-crypto/ecc"
 	curve "github.com/consensys/gnark-crypto/ecc/bn254"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
+	"github.com/consensys/gnark-crypto/ecc/bn254/fr/fft"
 	"github.com/zilong-dai/gnark/backend/groth16"
+	native "github.com/zilong-dai/gnark/backend/groth16/bn254"
 	"github.com/zilong-dai/gnark/frontend"
 	"github.com/zilong-dai/gnark/frontend/cs/r1cs"
 )
@@ -67,6 +69,57 @@ func TestMSMHookProofAndErrorJoin(t *testing.T) {
 			t.Fatalf("proof returned before all G1 tasks joined: active=%d completed=%d", engine.active.Load(), engine.completed.Load())
 		}
 	})
+	t.Run("h_hook_cpu_reference", func(t *testing.T) {
+		b := &msmBackend{name: "cpu_h_hook", engine: cpuMSM{}, hEngine: hFunc(native.ComputeHCPU)}
+		p, err := b.Prove(cs, pk, w)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := groth16.Verify(p, vk, pub); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("h_error_no_fallback_or_msm", func(t *testing.T) {
+		failure := errors.New("injected_h_failure")
+		engine := &countingMSM{}
+		b := &msmBackend{name: "failed_h_hook", engine: engine, hEngine: hFunc(func(a, b, c []fr.Element, d *fft.Domain) ([]fr.Element, error) { return nil, failure })}
+		if _, err := b.Prove(cs, pk, w); !errors.Is(err, failure) {
+			t.Fatal("H error not propagated")
+		}
+		if engine.calls.Load() != 0 {
+			t.Fatal("MSM ran after H failure")
+		}
+	})
+	t.Run("h_wrong_length_rejected", func(t *testing.T) {
+		engine := &countingMSM{}
+		b := &msmBackend{name: "short_h_hook", engine: engine, hEngine: hFunc(func(a, b, c []fr.Element, d *fft.Domain) ([]fr.Element, error) { return nil, nil })}
+		if _, err := b.Prove(cs, pk, w); err == nil {
+			t.Fatal("short H output accepted")
+		}
+		if engine.calls.Load() != 0 {
+			t.Fatal("MSM ran after invalid H output")
+		}
+	})
+}
+
+type hFunc func([]fr.Element, []fr.Element, []fr.Element, *fft.Domain) ([]fr.Element, error)
+
+func (f hFunc) ComputeH(a, b, c []fr.Element, d *fft.Domain) ([]fr.Element, error) {
+	return f(a, b, c, d)
+}
+
+type countingMSM struct {
+	cpuMSM
+	calls atomic.Int32
+}
+
+func (e *countingMSM) G1(name string, out *curve.G1Jac, p []curve.G1Affine, s []fr.Element, c ecc.MultiExpConfig) error {
+	e.calls.Add(1)
+	return e.cpuMSM.G1(name, out, p, s, c)
+}
+func (e *countingMSM) G2(name string, out *curve.G2Jac, p []curve.G2Affine, s []fr.Element, c ecc.MultiExpConfig) error {
+	e.calls.Add(1)
+	return e.cpuMSM.G2(name, out, p, s, c)
 }
 
 var errInjectedMSM = errors.New("injected_msm_failure")

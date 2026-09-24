@@ -1,0 +1,21 @@
+--- a/icicle/backend/cuda/src/ntt/ntt.cuh
++++ b/icicle/backend/cuda/src/ntt/ntt.cuh
+@@ -527,7 +527,9 @@
+ 
+     domain.max_size = 0;
+     domain.max_log_size = 0;
+-    domain.twiddles = nullptr; // allocated via cudaMallocManaged(...) so released without calling cudaFree(...)
++    // cudaMallocManaged allocations require cudaFree just like device allocations.
++    CHK_IF_RETURN(cudaFree(domain.twiddles));
++    domain.twiddles = nullptr;
+     CHK_IF_RETURN(cudaFreeAsync(domain.internal_twiddles, ctx.stream));
+     domain.internal_twiddles = nullptr;
+     CHK_IF_RETURN(cudaFreeAsync(domain.basic_twiddles, ctx.stream));
+@@ -547,6 +549,7 @@
+     CHK_IF_RETURN(cudaFreeAsync(domain.fast_basic_twiddles_inv, ctx.stream));
+     domain.fast_basic_twiddles_inv = nullptr;
+     domain.initialized = false;
++    CHK_IF_RETURN(cudaStreamSynchronize(ctx.stream));
+ 
+     return CHK_LAST();
+   }

@@ -231,3 +231,24 @@ psy-memory 实验记录 `fe521da` 已推送至 `feat/rollback-delete`。未合�
 `gpu-ntt-compat-threaded-20260924` 再次12/12通过。未将 NTT 接入 prover。
 新增代码编译通过，Python统计测试2项通过，gnark两个补丁从原始模块重放后的完整源码树与指纹一致。
 后续顺序：完整computeH逐元素对照→生产规模域与显存释放→真实证明原CPU验证→空闲时公平性能回放。
+
+## 完整GPU computeH与重复验证
+
+新增可选 `--gpu-h`，把七次NTT与逐点计算放到GPU，保留原gnark参数、solver及CPU verifier。
+原CPU实现作为独立参考，验证补零/coset/bit-reversed输出；4M→8M→4M逐元素一致。
+检查发现固定ICICLE的domain release遗漏cudaMallocManaged twiddles释放，修复前后单独对照确认；
+另将任意coset幂表从串行CPU改为同流GPU生成，再将host编码转换限制为最多8线程。
+domain与设备缓冲区逐次释放；失败返回不回退CPU，prover等待H/过滤任务结束，错误H不启动MSM。
+
+固定二进制BAAB（B1→A1→A2→B2，GPU H/CPU H）共72份证明全部通过，每配置/场景6个正式样本。
+Go Prove中位数：bridge 3.920→2.219秒（−43.4%），deposit 2.213→1.466秒（−33.8%），withdrawal 2.315→1.622秒（−30.0%）。
+后台CPU粗估1.35–2.22核；CPU H对照RSS峰16.194–16.448GiB，GPU H为15.374–15.510GiB。
+这只是Go阶段收益，不能直接用于Rust/FFI整体时间。默认保持CPU H＋GPU MSM1048576/4，GPU H显式启用。
+
+配对后仅补强初始化部分失败与kernel启动失败清理；最终版本小H/域生命周期回归通过，
+再完成36份间隔2秒混合证明（9预热+27测量），本轮总计108份真实证明全部验证通过。
+35空闲窗口进程显存均230MiB，整卡空闲386–454MiB；进程/整卡采样峰分别1286/1764MiB。
+RSS高水位16.137GiB，后段回落，Go堆随GC下降，swap=0；有限回放没有空闲显存累计增长迹象。
+最终gnark三补丁、ICICLE六补丁重放与指纹相同；Python统计测试通过，所有原始证据私有归档。
+性能和内存分析入口：`dev/proverbench/analyze_gpu_h.py`、`analyze_gpu_h_memory.py`。
+实际FFI集成、更多场景/长时并发和参数加载优化继续作为后续工作；未部署。

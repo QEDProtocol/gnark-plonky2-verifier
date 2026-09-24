@@ -199,6 +199,7 @@ func run(r *recorder) error {
 	device := flag.Int("device", 0, "CUDA device ordinal")
 	chunk := flag.Int("msm-chunk-size", defaultMSMChunkSize, "maximum points per GPU MSM chunk")
 	internalChunks := flag.Int("msm-internal-chunks", defaultMSMInternalChunks, "ICICLE internal pipeline chunks (1,2,4,8)")
+	gpuH := flag.Bool("gpu-h", false, "experimental GPU computeH (icicle-msm only)")
 	backendDir := flag.String("backend-dir", "", "ICICLE CUDA backend library directory")
 	gc := flag.Bool("gc-between", false, "explicit experimental GC; default off")
 	heap := flag.String("heap-profile", "", "optional private final heap profile")
@@ -208,7 +209,7 @@ func run(r *recorder) error {
 	if *root == "" || *cycles < 1 || *warmup < 0 || *interval < 0 || *period < 0 {
 		return errors.New("invalid_arguments")
 	}
-	b, err := selectBackendWithOptions(*backend, backendOptions{Device: *device, ChunkSize: *chunk, InternalChunks: *internalChunks, BackendDir: *backendDir, Recorder: r})
+	b, err := selectBackendWithOptions(*backend, backendOptions{Device: *device, ChunkSize: *chunk, InternalChunks: *internalChunks, BackendDir: *backendDir, Recorder: r, GPUH: *gpuH})
 	if err != nil {
 		return err
 	}
@@ -235,7 +236,7 @@ func run(r *recorder) error {
 	zerolog.DurationFieldUnit = time.Millisecond
 	zerolog.DurationFieldInteger = false
 	logger.Set(zerolog.New(r))
-	r.emit("config", map[string]any{"backend": b.Name(), "device": *device, "msm_chunk_size": *chunk, "msm_internal_chunks": *internalChunks, "go_version": runtime.Version(), "gomaxprocs": runtime.GOMAXPROCS(0), "cycles": *cycles, "warmup": *warmup, "samples": len(samples), "interval_ms": float64(*interval) / 1e6, "gc_between": *gc, "sample_interval_ms": float64(*period) / 1e6})
+	r.emit("config", map[string]any{"backend": b.Name(), "gpu_h": *gpuH, "device": *device, "msm_chunk_size": *chunk, "msm_internal_chunks": *internalChunks, "go_version": runtime.Version(), "gomaxprocs": runtime.GOMAXPROCS(0), "cycles": *cycles, "warmup": *warmup, "samples": len(samples), "interval_ms": float64(*interval) / 1e6, "gc_between": *gc, "sample_interval_ms": float64(*period) / 1e6})
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
 	if *period > 0 {

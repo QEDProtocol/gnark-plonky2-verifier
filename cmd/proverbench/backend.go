@@ -21,6 +21,7 @@ type backendOptions struct {
 	Device, ChunkSize, InternalChunks int
 	BackendDir                        string
 	Recorder                          *recorder
+	GPUH                              bool
 }
 type proverBackend interface {
 	Name() string
@@ -54,6 +55,9 @@ func selectBackend(name string) (proverBackend, error) {
 func selectBackendWithOptions(name string, opt backendOptions) (proverBackend, error) {
 	if opt.Device < 0 || opt.ChunkSize < 1 || opt.ChunkSize > 1<<20 {
 		return nil, errors.New("invalid_backend_options")
+	}
+	if opt.GPUH && name != "icicle-msm" {
+		return nil, errors.New("gpu_h_requires_icicle")
 	}
 	switch name {
 	case "cpu":

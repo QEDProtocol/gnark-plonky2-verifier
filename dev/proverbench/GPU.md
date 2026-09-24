@@ -9,6 +9,7 @@
 保留线上 gnark fork `2081880d08df`、gnark-crypto、R1CS/PK/VK 和 CPU verifier，
 通过本地补丁在原 BN254 prover 中引入 `ProveWithMSM`。只替换四次 G1 MSM
 （A、B、K、Z）和一次 G2 MSM（B2）。solver、FFT、commitment 和证明格式沿用原代码。
+后续可选 `--gpu-h` 额外替换 computeH，详见文末；默认配置仍仅替换 MSM。
 不使用旧 fork 已失配的 `icicle` build tag，不升级整套 gnark，也不重新 Setup 生产参数。
 
 三个实验构建：
@@ -22,6 +23,7 @@
 ICICLE 固定 commit `b62bbbe518a73214da10ece26969ad55e6fa0cd0`。
 `gnark-source.json` 固定源码指纹，补丁保存在 `gnark-msm.patch`、`gnark-h-timing.patch`、`icicle-runtime.patch`、`icicle-cuda-build.patch`、
 `icicle-msm-stream-dependency.patch` 与 `icicle-msm-chunk-cleanup.patch`。
+完整 H 扩展另外使用 `gnark-h-backend.patch`、`icicle-ntt-domain-release.patch`、`icicle-ntt-coset-gpu.patch`。
 runtime 补丁释放 `LoadBackend` 的临时 `C.CString`，避免实验接入引入新的字符串泄漏。
 镜像位于忽略目录 `lab-deps/`，构建仍检查其完整源码树指纹，不能绕过源码版本检查。
 生产 worker、Rust FFI、主 go.mod/go.sum 均不修改。
@@ -193,3 +195,59 @@ python3 dev/proverbench/gpu_runtime.py --name gpu-ntt-next \
 该测试没有接入真实 prover。后续先实现完整 computeH 对照，保留补零、七次变换、
 逐点运算和最终 bit-reversed 顺序，再验证生产规模域、显存生命周期及原 CPU Verify。
 公平性能回放等待 CPU 空闲；参数加载优化仍单独保留为待办。
+
+## 完整 GPU computeH（可选，已验证）
+
+`--backend icicle-msm --gpu-h` 保留4块MSM，同时替换完整 computeH；不加 `--gpu-h` 即为原 CPU H 对照。
+solver、原参数、CPU verifier和证明格式不变。当前只支持2至8M二次幂域，超范围报错；没有CPU回退。
+三个设备向量、一个复用host缓冲区，七次NTT与逐点计算保持在设备上；host编码转换最多8线程。
+使用原根、coset、补零和最终bit-reversed顺序，每次调用结束释放设备向量与domain，不缓存GPU key/domain。
+引擎和domain生命周期分别加锁，锁定OS线程后选卡；CUDA调用同步，分配/传输/释放错误返回。
+prover 在 H 失败或输出长度错误时拒绝继续，返回前等待 H 与 witness 过滤任务收尾。
+
+固定ICICLE版本另外修复两处：
+
+- domain release 原先把 `cudaMallocManaged` 的 twiddles 指针直接清空，现调用 `cudaFree` 并等待流释放完成。
+  修复前1M域5次循环使可用显存较首次减少128MiB；仅释放补丁后原测试通过，延长到21次也通过。
+  这是新GPU路径的漏洞，与此前CPU/FFI内存问题不同。驱动记账有波动，不能要求每次读数完全一致。
+- 任意coset幂表原先逐元素在CPU生成再上传，现在在NTT同一流的CUDA kernel内计算。
+  4M的NTT总时间从约1.18秒降至40毫秒；加入并行host转换后完整H约0.24秒，8M约0.49秒。
+  这些是8线程合成检查的局部时间，不等于完整证明加速比。
+
+从 `45344c3` 的既有依赖镜像升级时，按顺序执行以下命令；已应用的补丁不要重复执行。
+新镜像由 `prepare --gpu --fetch` 自动按顺序应用全部补丁，构建严格校验源码树指纹。
+
+```sh
+patch --batch --forward -d lab-deps/gnark -p1 < dev/proverbench/gnark-h-backend.patch
+patch --batch --forward -d lab-deps/icicle-gnark -p1 < dev/proverbench/icicle-ntt-domain-release.patch
+patch --batch --forward -d lab-deps/icicle-gnark -p1 < dev/proverbench/icicle-ntt-coset-gpu.patch
+python3 dev/proverbench/gpu_build.py build --variant icicle-msm --cuda --compile-tests
+
+# 每次使用新的目录名。以下命令会执行计算：
+python3 dev/proverbench/gpu_runtime.py --name h-small-next --gpu-uuid GPU-08b12be2-292f-d468-a175-cae71edd7f8d --h
+python3 dev/proverbench/gpu_runtime.py --name h-large-next --gpu-uuid GPU-08b12be2-292f-d468-a175-cae71edd7f8d --h-large
+python3 dev/proverbench/gpu_runtime.py --name h-domain-next --gpu-uuid GPU-08b12be2-292f-d468-a175-cae71edd7f8d --domain-memory
+python3 dev/proverbench/lab.py run --name h-real-next --backend icicle-msm --gpu-h \
+  --gpu-uuid GPU-08b12be2-292f-d468-a175-cae71edd7f8d --scenario all --warmup 1 --cycles 1 --gomaxprocs 32
+```
+
+验证：12项小规模完整H、4M→8M→4M逐元素对照、独立12项NTT、错误后恢复、H接口失败拒绝/任务收尾、MSM回归均通过。
+BAAB 72份真实证明全部通过，每配置每场景6个正式样本：bridge 3.920→2.219秒（−43.4%），
+deposit 2.213→1.466秒（−33.8%），withdrawal 2.315→1.622秒（−30.0%）。
+仅切换gpu_h；后台CPU粗估1.35–2.22核，不称为绝对干净的生产基线，不与之前不同实验收益相乘。
+
+随后补强部分domain初始化失败、coset kernel启动失败的清理；最终二进制再完成36份间隔2秒的混合回放，全部通过。
+35个空闲窗口进程显存均230MiB，整卡空闲采样386–454MiB；进程/整卡采样峰值分别1286/1764MiB。
+RSS高水位16.137GiB，后段回落，Go堆有GC下降，swap=0。NVML进程/整卡查询不是同时进行，不能相减或当精确峰值。
+有限回放没有出现空闲显存累计增长，不能排除所有长期泄漏。GPU H当前仍须显式启用，未接入Rust FFI或部署。
+
+配对二进制及库保留在各run目录和 `lab-private/gpu-h-paired-libraries-20260924`；最终混合版本指纹单独记录。
+数值报告可在仓库根目录复现：
+
+```sh
+python3 dev/proverbench/analyze_gpu_h.py
+python3 dev/proverbench/analyze_gpu_h_memory.py
+```
+
+命令固定读取本次实验目录；原始证据位于 `lab-private/gpu-h-*` 与 `gpu-ntt-domain-*`。
+参数加载约100秒继续独立保留为待办。
