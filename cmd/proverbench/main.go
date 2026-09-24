@@ -87,7 +87,7 @@ func (r *recorder) snapshot(event string) {
 func (r *recorder) Write(b []byte) (int, error) {
 	var v map[string]any
 	if json.Unmarshal(b, &v) == nil {
-		phase := map[string]string{"constraint system solver done": "solver", "prover done": "prover_compute"}[fmt.Sprint(v["message"])]
+		phase := map[string]string{"constraint system solver done": "solver", "prover done": "prover_compute", "proverbench compute H done": "compute_h"}[fmt.Sprint(v["message"])]
 		if phase != "" {
 			f := map[string]any{"stage": phase}
 			if n, ok := v["took"].(float64); ok {

@@ -1,0 +1,12 @@
+--- a/backend/groth16/bn254/prove.go
++++ b/backend/groth16/bn254/prove.go
+@@ -146,7 +146,9 @@
+ 	var h []fr.Element
+ 	chHDone := make(chan struct{}, 1)
+ 	go func() {
++		hStart := time.Now()
+ 		h = computeH(solution.A, solution.B, solution.C, &pk.Domain)
++		log.Debug().Dur("took", time.Since(hStart)).Msg("proverbench compute H done")
+ 		solution.A = nil
+ 		solution.B = nil
+ 		solution.C = nil

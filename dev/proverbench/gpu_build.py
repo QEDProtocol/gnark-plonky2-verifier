@@ -58,6 +58,7 @@ def prepare(args):
         for p in gnark.rglob('*'):
             p.chmod(0o755 if p.is_dir() else 0o644)
         subprocess.run(['patch', '--batch', '-p1', '-i', str(HERE / 'gnark-msm.patch')], cwd=gnark, check=True)
+        subprocess.run(['patch', '--batch', '-p1', '-i', str(HERE / 'gnark-h-timing.patch')], cwd=gnark, check=True)
     if args.gpu and not (DEPS / 'icicle-gnark').exists():
         if not args.fetch:
             raise ValueError('ICICLE missing; use prepare --gpu --fetch to explicitly download pinned source')

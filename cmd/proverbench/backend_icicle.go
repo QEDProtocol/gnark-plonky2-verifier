@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/consensys/gnark-crypto/ecc"
@@ -32,6 +33,7 @@ type icicleEngine struct {
 	closed           bool
 	internalChunks   int
 	pointsMontgomery bool
+	recorder         *recorder
 }
 
 var backendLoadMu sync.Mutex
@@ -68,7 +70,7 @@ func newICICLEEngine(opt backendOptions) (msmEngine, error) {
 	if err := icicleError("load_backend", iruntime.LoadBackend(opt.BackendDir, true)); err != nil {
 		return nil, err
 	}
-	e := &icicleEngine{device: iruntime.CreateDevice("CUDA", opt.Device), chunk: opt.ChunkSize, internalChunks: opt.InternalChunks, pointsMontgomery: true}
+	e := &icicleEngine{device: iruntime.CreateDevice("CUDA", opt.Device), chunk: opt.ChunkSize, internalChunks: opt.InternalChunks, pointsMontgomery: true, recorder: opt.Recorder}
 	if e.internalChunks == 0 {
 		e.internalChunks = defaultMSMInternalChunks
 	}
@@ -111,12 +113,31 @@ func (e *icicleEngine) msmConfig() (core.MSMConfig, func()) {
 	return c, func() { config_extension.Delete(ext) }
 }
 
-func (e *icicleEngine) G1(_ string, out *curve.G1Jac, p []curve.G1Affine, s []fr.Element, _ ecc.MultiExpConfig) error {
+func (e *icicleEngine) emitDetail(name string, points, chunks int, wait, exclusive, backend time.Duration, ok bool) {
+	if e.recorder == nil {
+		return
+	}
+	e.recorder.emit("msm_detail", map[string]any{
+		"stage": "msm_" + name, "points": points, "chunks": chunks, "ok": ok,
+		"wait_ms":          float64(wait.Nanoseconds()) / 1e6,
+		"exclusive_ms":     float64(exclusive.Nanoseconds()) / 1e6,
+		"backend_ms":       float64(backend.Nanoseconds()) / 1e6,
+		"host_overhead_ms": float64((exclusive - backend).Nanoseconds()) / 1e6,
+	})
+}
+
+func (e *icicleEngine) G1(name string, out *curve.G1Jac, p []curve.G1Affine, s []fr.Element, _ ecc.MultiExpConfig) error {
 	if len(p) != len(s) {
 		return errors.New("msm_length_mismatch")
 	}
+	waitStart := time.Now()
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	wait := time.Since(waitStart)
+	exclusiveStart := time.Now()
+	var backendTime time.Duration
+	chunks, ok := 0, false
+	defer func() { e.emitDetail("g1_"+name, len(s), chunks, wait, time.Since(exclusiveStart), backendTime, ok) }()
 	if e.closed {
 		return errors.New("icicle_engine_closed")
 	}
@@ -132,7 +153,10 @@ func (e *icicleEngine) G1(_ string, out *curve.G1Jac, p []curve.G1Affine, s []fr
 	for start := 0; start < len(s); start += e.chunk {
 		end := min(start+e.chunk, len(s))
 		result := make(core.HostSlice[icurve.Projective], 1)
+		backendStart := time.Now()
 		status := imsm.Msm(core.HostSlice[fr.Element](s[start:end]), core.HostSlice[curve.G1Affine](p[start:end]), &cfg, result)
+		backendTime += time.Since(backendStart)
+		chunks++
 		// Synchronous calls return only after host inputs/results are no longer used.
 		runtime.KeepAlive(p)
 		runtime.KeepAlive(s)
@@ -146,14 +170,21 @@ func (e *icicleEngine) G1(_ string, out *curve.G1Jac, p []curve.G1Affine, s []fr
 		acc.AddAssign(&chunk)
 	}
 	*out = acc
+	ok = true
 	return nil
 }
-func (e *icicleEngine) G2(_ string, out *curve.G2Jac, p []curve.G2Affine, s []fr.Element, _ ecc.MultiExpConfig) error {
+func (e *icicleEngine) G2(name string, out *curve.G2Jac, p []curve.G2Affine, s []fr.Element, _ ecc.MultiExpConfig) error {
 	if len(p) != len(s) {
 		return errors.New("msm_length_mismatch")
 	}
+	waitStart := time.Now()
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	wait := time.Since(waitStart)
+	exclusiveStart := time.Now()
+	var backendTime time.Duration
+	chunks, ok := 0, false
+	defer func() { e.emitDetail("g2_"+name, len(s), chunks, wait, time.Since(exclusiveStart), backendTime, ok) }()
 	if e.closed {
 		return errors.New("icicle_engine_closed")
 	}
@@ -169,7 +200,10 @@ func (e *icicleEngine) G2(_ string, out *curve.G2Jac, p []curve.G2Affine, s []fr
 	for start := 0; start < len(s); start += e.chunk {
 		end := min(start+e.chunk, len(s))
 		result := make(core.HostSlice[ig2.G2Projective], 1)
+		backendStart := time.Now()
 		status := ig2.G2Msm(core.HostSlice[fr.Element](s[start:end]), core.HostSlice[curve.G2Affine](p[start:end]), &cfg, result)
+		backendTime += time.Since(backendStart)
+		chunks++
 		runtime.KeepAlive(p)
 		runtime.KeepAlive(s)
 		if err := icicleError("g2_msm", status); err != nil {
@@ -182,6 +216,7 @@ func (e *icicleEngine) G2(_ string, out *curve.G2Jac, p []curve.G2Affine, s []fr
 		acc.AddAssign(&chunk)
 	}
 	*out = acc
+	ok = true
 	return nil
 }
 

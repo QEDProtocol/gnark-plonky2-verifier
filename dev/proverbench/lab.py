@@ -179,7 +179,7 @@ def summarize(events, metadata, exit_code):
             'peak_observed_rss_bytes': max((e.get('rss_bytes', 0) for e in events), default=0),
             'rss_hwm_bytes': max((e.get('rss_hwm_bytes', 0) for e in events), default=0),
             'notes': ['Warm-up excluded from timings; loading excluded from total.',
-                      'solver/prover_compute are nested in groth16_prove; do not sum them twice.',
+                      'solver/prover_compute are nested in groth16_prove; compute_h is nested in prover_compute; do not sum them twice.',
                       'Total includes benchmark event output; not full RPC/FFI latency.',
                       'RSS/HWM include parameter loading and warm-up; small-sample P95 is descriptive only.']}
 

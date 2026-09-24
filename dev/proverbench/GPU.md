@@ -20,7 +20,7 @@
 | icicle-msm | 同一接口替换为 ICICLE G1/G2 MSM | lab-gpu.mod、ICICLE v3.2.2 | 向量测试、单卡隔离与三类真实27份验证通过 |
 
 ICICLE 固定 commit `b62bbbe518a73214da10ece26969ad55e6fa0cd0`。
-`gnark-source.json` 固定源码指纹，补丁保存在 `gnark-msm.patch`、`icicle-runtime.patch`、`icicle-cuda-build.patch`、
+`gnark-source.json` 固定源码指纹，补丁保存在 `gnark-msm.patch`、`gnark-h-timing.patch`、`icicle-runtime.patch`、`icicle-cuda-build.patch`、
 `icicle-msm-stream-dependency.patch` 与 `icicle-msm-chunk-cleanup.patch`。
 runtime 补丁释放 `LoadBackend` 的临时 `C.CString`，避免实验接入引入新的字符串泄漏。
 镜像位于忽略目录 `lab-deps/`，构建仍检查其完整源码树指纹，不能绕过源码版本检查。
@@ -159,3 +159,37 @@ ABBA配对及混合重复运行证据见`lab-private/gpu-c4-paired-analysis-2026
 两个调参维度同时改变，不能将全部完整证明收益归因于内部块数。参数加载优化继续独立处理。
 
 本轮ABBA配对72份与新默认混合54份合计126份全部通过CPU verifier。Go Prove中位数较旧GPU配置降低8.1%–11.2%；有限混合回放中空闲进程显存均228MiB、RSS随GC有回落。详细计时口径、显存采样限制和证据见上述目录的REPORT.md。
+
+## 后续阶段定位与 NTT 兼容性
+
+新增 `compute_h` 内部计时，以及每次 GPU MSM 的 `msm_detail`：
+
+- `wait_ms` 是等待 engine mutex 的时间，各任务的等待可能重叠，不能相加当作关键路径。
+- `exclusive_ms` 是拿锁后的工作时间；五次 MSM 串行执行，可以相加估算 MSM 总工作时间。
+- `backend_ms` 是同步 ICICLE 调用之和，包含拷贝、转换和执行，不是纯 kernel 时间。
+- `host_overhead_ms = exclusive_ms - backend_ms`；日志写入本身不包含在 exclusive 计时中。
+- `compute_h`、MSM 都嵌套在 `prover_compute`，后者嵌套在 `groth16_prove`，不能重复计入总耗时。
+
+新建依赖镜像时 `prepare` 会依次应用两个 gnark 补丁。已有旧镜像需要先在仓库根目录执行
+`patch --batch --forward -d lab-deps/gnark -p1 < dev/proverbench/gnark-h-timing.patch`，再 build；
+已应用该补丁的镜像不要重复执行。构建会核验完整依赖指纹。两个补丁已从原始模块重放并逐树校验一致。
+
+`gpu-c4-stage-profile-20260924` 完成18份真实证明（9预热、9测量），全部通过原 CPU verifier。
+本轮出现其他重型 CPU 任务，因此仅用于阶段定位，不作为新的速度对照。
+CPU profile 在参数加载之后启动，包含预热；FFT 路径下的前15项热点占总 CPU 采样的80.23%，
+主要为有限域乘法和蝶形运算。这是 CPU 采样占比，不能直接解释为墙钟时间占比或预计加速比。
+
+```sh
+python3 dev/proverbench/analyze_gpu_stages.py lab-private/gpu-c4-stage-profile-20260924
+
+# 独立小规模 NTT 兼容性检查，不加载真实证明参数；运行前先 build。
+python3 dev/proverbench/gpu_runtime.py --name gpu-ntt-next \
+  --gpu-uuid GPU-08b12be2-292f-d468-a175-cae71edd7f8d --ntt
+```
+
+`gpu-ntt-compat-threaded-20260924` 的12项检查全部通过：长度16、1024、65536，
+正/逆变换分别覆盖普通域和 coset，逐元素与原 gnark FFT 相同。
+使用原 gnark 的根、显式 canonical 标量转换与自然序输出比较；每个测试 goroutine 锁定 OS 线程并选择设备。
+该测试没有接入真实 prover。后续先实现完整 computeH 对照，保留补零、七次变换、
+逐点运算和最终 bit-reversed 顺序，再验证生产规模域、显存生命周期及原 CPU Verify。
+公平性能回放等待 CPU 空闲；参数加载优化仍单独保留为待办。

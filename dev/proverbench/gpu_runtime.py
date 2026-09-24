@@ -141,12 +141,15 @@ def check(args):
     out = lab.ROOT / 'lab-private' / args.name
     out.mkdir(parents=True, mode=0o700, exist_ok=False)
     lab.write_json(out / 'check.json', {'build': build, 'gpu': card, 'synthetic_only': True,
-                                      'pipeline': args.pipeline, 'chunk_timing': args.chunk_timing})
+                                      'pipeline': args.pipeline, 'chunk_timing': args.chunk_timing,
+                                      'ntt': args.ntt})
     test_filter = '^TestICICLE'
     if args.pipeline:
         test_filter = '^TestICICLEMSMPipeline$'
     elif args.chunk_timing:
         test_filter = '^TestICICLEMSMChunkTiming$'
+    elif args.ntt:
+        test_filter = '^TestICICLENTTVectors$'
     cmd = ['bwrap', '--die-with-parent', '--new-session', '--unshare-net',
            '--ro-bind', '/', '/', '--bind', str(out), str(out), '--tmpfs', '/tmp',
            '--proc', '/proc', '--dev', '/dev', '--clearenv',
@@ -155,6 +158,7 @@ def check(args):
            '--setenv', 'PROVERBENCH_BACKEND_DIR', str(Path(build['library_dir']) / 'backend'),
            '--setenv', 'PROVERBENCH_PIPELINE', '1' if args.pipeline else '0',
            '--setenv', 'PROVERBENCH_CHUNK_TIMING', '1' if args.chunk_timing else '0',
+           '--setenv', 'PROVERBENCH_NTT_TEST', '1' if args.ntt else '0',
            '--', str(binary), '-test.v', '-test.timeout=10m',
            '-test.run=' + test_filter]
     # Only synthetic vectors are used here; no real proof/witness can be logged.
@@ -173,4 +177,5 @@ if __name__ == '__main__':
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--pipeline', action='store_true')
     mode.add_argument('--chunk-timing', action='store_true')
+    mode.add_argument('--ntt', action='store_true')
     raise SystemExit(check(parser.parse_args()))

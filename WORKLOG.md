@@ -214,3 +214,20 @@ Go CLI、Python runner默认值已统一为1048576/4；engine的缺省内部块�
 
 连续回放完成：含加载约362秒，53个请求间空闲窗口进程显存均228MiB，进程显存采样峰值708MiB；RSS高水位16.644GiB并出现回落，Go堆随GC下降，swap=0。本轮没有空闲显存随请求增长的迹象，有限回放不能排除所有长期泄漏。
 本轮合计126份真实证明通过（4块90份，旧配置36份）。测试均已退出，5070 Ti恢复90MiB空闲占用。新默认1048576/4已完成构建、边界测试及真实回放；参数加载和实际FFI集成继续作为后续事项。
+
+## 推送完成与下一阶段定位
+
+4块代码 `3c9d4ec` 已推送至 QEDProtocol/gnark-plonky2-verifier 的 `lab/groth16-benchmark-20260924`；
+psy-memory 实验记录 `fe521da` 已推送至 `feat/rollback-delete`。未合并或部署。
+
+新增 computeH 计时和 MSM 等锁/持锁/同步 ICICLE 调用时间，分析脚本检查每个测量请求的四项阶段与五次 MSM。
+`gpu-c4-stage-profile-20260924` 的18份证明全部通过 CPU Verify。期间其他 psy_user_cli 任务占用多核，
+本轮不能作为性能基线，因此停止进一步完整证明测速，仅进行轻量代码与正确性验证。
+加载后 CPU profile 的 FFT 路径前15项热点占总采样80.23%，主要是有限域乘法和蝶形运算。
+这支持下一步关注 computeH 的 GPU NTT，但不能直接推断墙钟加速比。
+
+独立 NTT 测试使用原 gnark 根与显式 canonical 编码，长度16/1024/65536、正逆变换、普通/coset共12项逐元素一致。
+初次运行 `gpu-ntt-compat-20260924` 通过；补齐 t.Run 子goroutine锁线程和选卡后，
+`gpu-ntt-compat-threaded-20260924` 再次12/12通过。未将 NTT 接入 prover。
+新增代码编译通过，Python统计测试2项通过，gnark两个补丁从原始模块重放后的完整源码树与指纹一致。
+后续顺序：完整computeH逐元素对照→生产规模域与显存释放→真实证明原CPU验证→空闲时公平性能回放。
