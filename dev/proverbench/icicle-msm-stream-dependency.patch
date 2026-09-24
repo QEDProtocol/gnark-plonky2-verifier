@@ -1,0 +1,41 @@
+diff --git a/icicle/backend/cuda/src/msm/cuda_msm.cuh b/icicle/backend/cuda/src/msm/cuda_msm.cuh
+index c41f7b2..84fcb0c 100644
+--- a/icicle/backend/cuda/src/msm/cuda_msm.cuh
++++ b/icicle/backend/cuda/src/msm/cuda_msm.cuh
+@@ -522,6 +522,7 @@ namespace msm {
+       bool init_points,
+       bool are_points_on_device,
+       bool are_points_montgomery_form,
++      cudaStream_t producer_stream,
+       cudaStream_t& stream_points,
+       const A* points,
+       A** points_processed,
+@@ -531,6 +532,19 @@ namespace msm {
+     {
+       if (init_points) {
+         if (!are_points_on_device || are_points_montgomery_form) CHK_IF_RETURN(cudaStreamCreate(&stream_points));
++        if (are_points_on_device && are_points_montgomery_form) {
++          // The internal pipeline stages points on producer_stream. Conversion
++          // runs on a separate stream and must not read that buffer before its
++          // asynchronous copy/allocation has completed. Keep the wait on GPU.
++          cudaEvent_t points_ready = nullptr;
++          CHK_IF_RETURN(cudaEventCreateWithFlags(&points_ready, cudaEventDisableTiming));
++          auto dependency_status = cudaEventRecord(points_ready, producer_stream);
++          if (dependency_status == cudaSuccess)
++            dependency_status = cudaStreamWaitEvent(stream_points, points_ready);
++          auto destroy_status = cudaEventDestroy(points_ready);
++          CHK_IF_RETURN(dependency_status);
++          CHK_IF_RETURN(destroy_status);
++        }
+         if (!are_points_on_device) {
+           // copy points to gpu
+           CHK_IF_RETURN(cudaMallocAsync(&d_allocated_points, sizeof(A) * nof_points, stream_points));
+@@ -1031,7 +1045,7 @@ namespace msm {
+ 
+       // (2) upload points to device in parallel to scalar sorting (using another stream)
+       CHK_IF_RETURN((upload_points<A>(
+-        init_points, are_points_on_device, are_points_montgomery_form, stream_points /*out*/, points, points_processed,
++        init_points, are_points_on_device, are_points_montgomery_form, stream, stream_points /*out*/, points, points_processed,
+         nof_points, d_allocated_points /*out*/, d_points /*out*/)));
+ 
+       // (3) Split and sort scalars

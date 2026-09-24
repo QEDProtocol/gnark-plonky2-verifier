@@ -1,0 +1,60 @@
+diff --git a/wrappers/golang/runtime/config_extension/config.go b/wrappers/golang/runtime/config_extension/config.go
+index 5ac5f19..189e77f 100644
+--- a/wrappers/golang/runtime/config_extension/config.go
++++ b/wrappers/golang/runtime/config_extension/config.go
+@@ -2,6 +2,7 @@ package config_extension
+ 
+ // #cgo CFLAGS: -I./include/
+ // #include "config_extension.h"
++// #include <stdlib.h>
+ import "C"
+ import (
+ 	"unsafe"
+@@ -24,23 +25,27 @@ func Delete(ext *ConfigExtension) {
+ 
+ func (ext *ConfigExtension) SetInt(key string, value int) {
+ 	cKey := C.CString(key)
++	defer C.free(unsafe.Pointer(cKey))
+ 	cValue := C.int(value)
+ 	C.config_extension_set_int(ext.handler, cKey, cValue)
+ }
+ 
+ func (ext *ConfigExtension) SetBool(key string, value bool) {
+ 	cKey := C.CString(key)
++	defer C.free(unsafe.Pointer(cKey))
+ 	cValue := C._Bool(value)
+ 	C.config_extension_set_bool(ext.handler, cKey, cValue)
+ }
+ 
+ func (ext *ConfigExtension) GetInt(key string) int {
+ 	cKey := C.CString(key)
++	defer C.free(unsafe.Pointer(cKey))
+ 	return int(C.config_extension_get_int(ext.handler, cKey))
+ }
+ 
+ func (ext *ConfigExtension) GetBool(key string) bool {
+ 	cKey := C.CString(key)
++	defer C.free(unsafe.Pointer(cKey))
+ 	return C.config_extension_get_bool(ext.handler, cKey) == C._Bool(true)
+ }
+ 
+diff --git a/wrappers/golang/runtime/runtime.go b/wrappers/golang/runtime/runtime.go
+index 297fd04..e8229dd 100644
+--- a/wrappers/golang/runtime/runtime.go
++++ b/wrappers/golang/runtime/runtime.go
+@@ -2,6 +2,7 @@ package runtime
+ 
+ // #cgo CFLAGS: -I./include/
+ // #include "runtime.h"
++// #include <stdlib.h>
+ import "C"
+ import (
+ 	"runtime"
+@@ -10,6 +11,7 @@ import (
+ 
+ func LoadBackend(path string, isRecursive bool) EIcicleError {
+ 	cPath := C.CString(path)
++	defer C.free(unsafe.Pointer(cPath))
+ 	cIsRecursive := C._Bool(isRecursive)
+ 	cErr := C.icicle_load_backend(cPath, cIsRecursive)
+ 	return EIcicleError(cErr)

@@ -1,0 +1,133 @@
+--- a/backend/groth16/bn254/prove.go
++++ b/backend/groth16/bn254/prove.go
+@@ -34,6 +34,7 @@
+ 	"github.com/zilong-dai/gnark/logger"
+ 	"math/big"
+ 	"runtime"
++	"sync"
+ 	"time"
+ 
+ 	fcs "github.com/zilong-dai/gnark/frontend/cs"
+@@ -61,6 +62,19 @@
+ 
+ // Prove generates the proof of knowledge of a r1cs with full witness (secret + public part).
+ func Prove(r1cs *cs.R1CS, pk *ProvingKey, fullWitness witness.Witness, opts ...backend.ProverOption) (*Proof, error) {
++	return proveWithMSM(r1cs, pk, fullWitness, nil, opts...)
++}
++
++// ProveWithMSM preserves this fork's solver, parameters and proof format.
++// The caller retains engine ownership until every MSM has returned.
++func ProveWithMSM(r1cs *cs.R1CS, pk *ProvingKey, fullWitness witness.Witness, engine MSMBackend, opts ...backend.ProverOption) (*Proof, error) {
++	if engine == nil {
++		return nil, fmt.Errorf("MSM backend required")
++	}
++	return proveWithMSM(r1cs, pk, fullWitness, engine, opts...)
++}
++
++func proveWithMSM(r1cs *cs.R1CS, pk *ProvingKey, fullWitness witness.Witness, engine MSMBackend, opts ...backend.ProverOption) (*Proof, error) {
+ 	opt, err := backend.NewProverConfig(opts...)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("new prover config: %w", err)
+@@ -191,7 +205,7 @@
+ 	chBs1Done := make(chan error, 1)
+ 	computeBS1 := func() {
+ 		<-chWireValuesB
+-		if _, err := bs1.MultiExp(pk.G1.B, wireValuesB, ecc.MultiExpConfig{NbTasks: n / 2}); err != nil {
++		if err := msmG1(engine, "B", &bs1, pk.G1.B, wireValuesB, ecc.MultiExpConfig{NbTasks: n / 2}); err != nil {
+ 			chBs1Done <- err
+ 			close(chBs1Done)
+ 			return
+@@ -204,7 +218,7 @@
+ 	chArDone := make(chan error, 1)
+ 	computeAR1 := func() {
+ 		<-chWireValuesA
+-		if _, err := ar.MultiExp(pk.G1.A, wireValuesA, ecc.MultiExpConfig{NbTasks: n / 2}); err != nil {
++		if err := msmG1(engine, "A", &ar, pk.G1.A, wireValuesA, ecc.MultiExpConfig{NbTasks: n / 2}); err != nil {
+ 			chArDone <- err
+ 			close(chArDone)
+ 			return
+@@ -222,9 +236,12 @@
+ 
+ 		var krs, krs2, p1 curve.G1Jac
+ 		chKrs2Done := make(chan error, 1)
++		krs2Finished := make(chan struct{})
++		defer func() { <-krs2Finished }()
+ 		sizeH := int(pk.Domain.Cardinality - 1) // comes from the fact the deg(H)=(n-1)+(n-1)-n=n-2
+ 		go func() {
+-			_, err := krs2.MultiExp(pk.G1.Z, h[:sizeH], ecc.MultiExpConfig{NbTasks: n / 2})
++			defer close(krs2Finished)
++			err := msmG1(engine, "Z", &krs2, pk.G1.Z, h[:sizeH], ecc.MultiExpConfig{NbTasks: n / 2})
+ 			chKrs2Done <- err
+ 		}()
+ 
+@@ -234,7 +251,7 @@
+ 		toRemove = append(toRemove, commitmentInfo.CommitmentIndexes())
+ 		_wireValues := filterHeap(wireValues[r1cs.GetNbPublicVariables():], r1cs.GetNbPublicVariables(), internal.ConcatAll(toRemove...))
+ 
+-		if _, err := krs.MultiExp(pk.G1.K, _wireValues, ecc.MultiExpConfig{NbTasks: n / 2}); err != nil {
++		if err := msmG1(engine, "K", &krs, pk.G1.K, _wireValues, ecc.MultiExpConfig{NbTasks: n / 2}); err != nil {
+ 			chKrsDone <- err
+ 			return
+ 		}
+@@ -280,7 +297,7 @@
+ 			nbTasks *= 2
+ 		}
+ 		<-chWireValuesB
+-		if _, err := Bs.MultiExp(pk.G2.B, wireValuesB, ecc.MultiExpConfig{NbTasks: nbTasks}); err != nil {
++		if err := msmG2(engine, "B2", &Bs, pk.G2.B, wireValuesB, ecc.MultiExpConfig{NbTasks: nbTasks}); err != nil {
+ 			return err
+ 		}
+ 
+@@ -297,10 +314,15 @@
+ 	<-chHDone
+ 
+ 	// schedule our proof part computations
+-	go computeKRS()
+-	go computeAR1()
+-	go computeBS1()
+-	if err := computeBS2(); err != nil {
++	var jobs sync.WaitGroup
++	jobs.Add(3)
++	go func() { defer jobs.Done(); computeKRS() }()
++	go func() { defer jobs.Done(); computeAR1() }()
++	go func() { defer jobs.Done(); computeBS1() }()
++	errBS2 := computeBS2()
++	// Join even on error: the caller may close GPU resources after return.
++	jobs.Wait()
++	if err := errBS2; err != nil {
+ 		return nil, err
+ 	}
+ 
+--- /dev/null
++++ b/backend/groth16/bn254/msm_backend.go
+@@ -0,0 +1,30 @@
++// Experimental extension to the pinned gnark fork; see dev/proverbench/GPU.md.
++package groth16
++
++import (
++	"github.com/consensys/gnark-crypto/ecc"
++	curve "github.com/consensys/gnark-crypto/ecc/bn254"
++	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
++)
++
++// MSMBackend supports concurrent calls and must not retain Go input buffers.
++// ProveWithMSM joins all work before returning, including on error.
++type MSMBackend interface {
++	G1(string, *curve.G1Jac, []curve.G1Affine, []fr.Element, ecc.MultiExpConfig) error
++	G2(string, *curve.G2Jac, []curve.G2Affine, []fr.Element, ecc.MultiExpConfig) error
++}
++
++func msmG1(e MSMBackend, name string, out *curve.G1Jac, points []curve.G1Affine, scalars []fr.Element, cfg ecc.MultiExpConfig) error {
++	if e != nil {
++		return e.G1(name, out, points, scalars, cfg)
++	}
++	_, err := out.MultiExp(points, scalars, cfg)
++	return err
++}
++func msmG2(e MSMBackend, name string, out *curve.G2Jac, points []curve.G2Affine, scalars []fr.Element, cfg ecc.MultiExpConfig) error {
++	if e != nil {
++		return e.G2(name, out, points, scalars, cfg)
++	}
++	_, err := out.MultiExp(points, scalars, cfg)
++	return err
++}

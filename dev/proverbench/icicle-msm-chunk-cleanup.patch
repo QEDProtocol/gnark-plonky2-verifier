@@ -1,0 +1,20 @@
+--- a/icicle/backend/cuda/src/msm/cuda_msm.cuh
++++ b/icicle/backend/cuda/src/msm/cuda_msm.cuh
+@@ -1092,6 +1092,17 @@
+         *buckets_external = buckets; // stopping after accumulation when using multiple chunks
+         if (d_allocated_scalars) CHK_IF_RETURN(cudaFreeAsync(d_allocated_scalars, stream));
+         if (d_allocated_points && !return_processed_points) CHK_IF_RETURN(cudaFreeAsync(d_allocated_points, stream));
++        // Consumer waits have already been enqueued. CUDA permits destroying
++        // pending events/streams; resources retire after queued work completes.
++        // Intermediate chunks must release these handles just like the last one.
++        if (stream_points) {
++          CHK_IF_RETURN(cudaEventDestroy(event_points_uploaded));
++          CHK_IF_RETURN(cudaStreamDestroy(stream_points));
++        }
++        if (stream_large_buckets) {
++          CHK_IF_RETURN(cudaEventDestroy(event_large_buckets_accumulated));
++          CHK_IF_RETURN(cudaStreamDestroy(stream_large_buckets));
++        }
+         return CHK_LAST();
+       }
+ 

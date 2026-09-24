@@ -27,3 +27,10 @@ testdata/
 **/target/
 ffi/Cargo.lock
 **/libg16verifier*
+
+# Offline benchmark runtime artifacts
+/lab-private/
+/lab-bin/
+/lab-cache/
+/dev/proverbench/__pycache__/
+/lab-deps/
